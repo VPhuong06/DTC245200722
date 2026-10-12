@@ -1,9 +1,9 @@
 # Hệ thống đặt lịch hẹn – An Nhiên Studio
 
-Website đặt lịch hẹn (dịch vụ, khung giờ, khách hàng, xác nhận) triển khai bằng **Docker Compose**: React + NestJS + PostgreSQL + pgAdmin, đứng sau **Nginx reverse proxy** có HTTPS tự ký và security headers.
+Website đặt lịch hẹn (dịch vụ, khung giờ, khách hàng, xác nhận) triển khai bằng **Docker Compose**: React + NestJS + PostgreSQL + pgAdmin, đứng sau **Nginx reverse proxy** có HTTPS tự ký và security headers, giám sát bằng **Prometheus + Grafana**.
 
 > Đề 40 – Học phần Triển khai và Quản trị Hệ thống Phần mềm.
-> Trạng thái: **commit 1** (ứng dụng, cơ sở dữ liệu, pgAdmin, Nginx HTTPS, hardening cơ bản). Giám sát Prometheus + Grafana (commit 2) và log tập trung Loki + Promtail (commit 3) sẽ được bổ sung.
+> Trạng thái: **commit 1** (ứng dụng, cơ sở dữ liệu, pgAdmin, Nginx HTTPS, hardening) và **commit 2** (giám sát Prometheus + Grafana). Log tập trung Loki + Promtail (commit 3) sẽ được bổ sung.
 
 ## Kiến trúc
 
@@ -22,15 +22,33 @@ flowchart LR
     pgadmin[pgAdmin 4]
   end
 
+  subgraph monitor [mạng monitor · internal]
+    prometheus[Prometheus]
+    grafana[Grafana]
+    cadvisor[cAdvisor]
+    nginxexp[nginx-exporter]
+    pgexp[postgres-exporter]
+  end
+
   nginx -- "/api/" --> backend
   nginx -- "/pgadmin/" --> pgadmin
+  nginx -- "/grafana/" --> grafana
+  nginx -- "/prometheus/<br/>basic auth" --> prometheus
   backend --> pg
   worker --> pg
   pgadmin --> pg
   worker -. "mạng egress (SMTP)" .-> smtp[(Máy chủ email)]
+
+  grafana --> prometheus
+  prometheus -- "/metrics" --> backend
+  prometheus --> cadvisor
+  prometheus --> nginxexp
+  prometheus --> pgexp
+  nginxexp -- "stub_status :8081" --> nginx
+  pgexp -- "user exporter" --> pg
 ```
 
-- Chỉ **Nginx** publish cổng (80, 443). PostgreSQL, pgAdmin, backend nằm trong mạng `app` (internal), không truy cập trực tiếp từ máy chủ.
+- Chỉ **Nginx** publish cổng (80, 443). PostgreSQL, pgAdmin, backend nằm trong mạng `app` (internal); Prometheus, Grafana và các exporter nằm trong mạng `monitor` (internal). Không dịch vụ nào khác truy cập trực tiếp được từ máy chủ.
 - Frontend được build thành tệp tĩnh và đóng gói cùng image Nginx.
 - Chống đặt trùng bằng **exclusion constraint** của PostgreSQL (`btree_gist` + `tstzrange`): hai lịch cùng nhân viên không thể chồng giờ kể cả khi gửi đồng thời.
 
@@ -40,11 +58,12 @@ flowchart LR
 | Backend, worker | Node.js 22, NestJS 11, `pg` (SQL migration thuần) |
 | Cơ sở dữ liệu | PostgreSQL 17 + pgAdmin 4 |
 | Reverse proxy | Nginx 1.28 (image `nginx-unprivileged`) |
+| Giám sát | Prometheus 3.13, Grafana 13.2, cAdvisor 0.55, nginx-prometheus-exporter 1.5, postgres_exporter 0.20, `prom-client` trong backend |
 | Triển khai | Docker Compose |
 
 ## Yêu cầu
 
-- Docker Desktop (Windows/macOS) hoặc Docker Engine + Docker Compose v2 (Linux), tối thiểu 4 GB RAM.
+- Docker Desktop (Windows/macOS) hoặc Docker Engine + Docker Compose v2 (Linux), tối thiểu 4 GB RAM (toàn bộ container dùng khoảng 0,8 GB khi chạy; image tải về khoảng 4 GB đĩa).
 - `openssl` và `bash` để chạy script (Windows: dùng **Git Bash** đi kèm Git for Windows).
 - Cổng 80 và 443 trên máy còn trống.
 
@@ -54,6 +73,7 @@ flowchart LR
 git clone https://github.com/VPhuong06/DTC245200722.git && cd DTC245200722
 ./scripts/gen-env.sh          # tạo .env với mật khẩu ngẫu nhiên mạnh (hoặc: cp .env.example .env rồi sửa mọi CHANGE_ME)
 ./scripts/gen-cert.sh         # sinh chứng chỉ HTTPS tự ký vào nginx/certs/
+./scripts/gen-htpasswd.sh     # tạo mật khẩu basic auth cho trang Prometheus vào nginx/auth/
 docker compose up -d --build
 docker compose ps             # mọi dịch vụ ở trạng thái running / healthy
 ```
@@ -72,6 +92,8 @@ Dừng hệ thống: `docker compose down` (giữ dữ liệu) hoặc `docker co
 | API | `https://localhost/api/v1` |
 | Tài liệu API (Swagger/OpenAPI) | `https://localhost/api/docs` |
 | pgAdmin | `https://localhost/pgadmin/` |
+| Grafana (dashboard giám sát) | `https://localhost/grafana/` |
+| Prometheus (targets, alerts, truy vấn PromQL) | `https://localhost/prometheus/` |
 
 ### Tài khoản demo
 
@@ -82,6 +104,8 @@ Mọi mật khẩu nằm trong tệp `.env` (không commit):
 | Trang quản trị | `ADMIN_EMAIL` | `ADMIN_PASSWORD` |
 | pgAdmin | `PGADMIN_DEFAULT_EMAIL` | `PGADMIN_DEFAULT_PASSWORD` |
 | Kết nối PostgreSQL trong pgAdmin (khai báo sẵn "Booking PostgreSQL") | `booking_app` | `APP_DB_PASSWORD` |
+| Grafana | `GRAFANA_ADMIN_USER` | `GRAFANA_ADMIN_PASSWORD` |
+| Prometheus (Nginx basic auth) | `PROMETHEUS_WEB_USER` | `PROMETHEUS_WEB_PASSWORD` |
 
 Câu SQL mẫu cho pgAdmin (xem dữ liệu, thêm/sửa/xóa, kiểm chứng chống đặt trùng và hạn chế quyền, theo dõi kết nối): [docs/sql/demo-pgadmin.sql](docs/sql/demo-pgadmin.sql). Mở Query Tool trên database `booking`, bôi đen từng câu rồi bấm ▶.
 
@@ -104,19 +128,55 @@ Khi `SEED_DEMO=true` và cơ sở dữ liệu còn trống, hệ thống nạp d
 
 Lỗi API luôn có dạng `{ "error": { "code", "message", "request_id" } }`.
 
+## Giám sát (Prometheus + Grafana)
+
+Prometheus thu thập metrics 15 giây/lần từ 5 nguồn trong mạng nội bộ; Grafana tự nạp sẵn nguồn dữ liệu và 3 dashboard khi khởi động (thư mục **Đặt lịch hẹn**).
+
+| Nguồn (job) | Thu thập bằng | Giám sát |
+| --- | --- | --- |
+| `cadvisor` | cAdvisor | CPU, RAM (so với giới hạn), mạng của **từng container** |
+| `nginx` | nginx-prometheus-exporter đọc `stub_status` (cổng nội bộ 8081) | **Web server**: kết nối, request/giây |
+| `backend` | `prom-client` tại `GET /metrics` của backend | **API**: request theo route và mã trạng thái, độ trễ p50/p95/p99, lịch hẹn trong ngày, bộ nhớ Node.js |
+| `postgres` | postgres_exporter, user `exporter` chỉ có quyền `pg_monitor` | **Database**: kết nối, giao dịch/giây, cache hit, dung lượng, lock, deadlock |
+| `prometheus` | chính Prometheus | Tình trạng Prometheus |
+
+| Dashboard | Nội dung chính |
+| --- | --- |
+| **Container (cAdvisor)** | Số container đang chạy, bảng trạng thái các target (`up`), CPU/RAM/mạng theo container, RAM so với giới hạn |
+| **Web server & API** | Nginx up, kết nối, request/giây; backend: request theo mã trạng thái, độ trễ, tỉ lệ lỗi 5xx, route gọi nhiều nhất, lịch hẹn tạo mới trong 24 giờ, số lần đặt trùng bị chặn (409), lịch hôm nay theo trạng thái |
+| **PostgreSQL** | pg_up, dung lượng, kết nối theo trạng thái, commit/rollback mỗi giây, cache hit, số dòng đọc/ghi, lock theo loại, deadlock |
+
+Luật cảnh báo trong `monitoring/prometheus/alerts.yml` (xem tại `https://localhost/prometheus/alerts`): `TargetDown`, `PostgresDown`, `NginxDown`, `BackendHighErrorRate` (> 5% lỗi 5xx), `BackendSlowResponses` (p95 > 1 giây), `ContainerMemoryNearLimit` (> 90% giới hạn RAM).
+
+Một số ghi chú thiết kế:
+
+- Nhãn `route` của metrics HTTP là **mẫu đường dẫn** (`/api/v1/admin/appointments/:id/confirm`), không phải đường dẫn thật, để mã lịch và UUID không làm bùng nổ số chuỗi metrics.
+- "Lịch hẹn tạo mới (24 giờ)" đếm trực tiếp trong cơ sở dữ liệu. Không dùng `increase()` trên counter HTTP vì hàm này ngoại suy nên không ra số nguyên chính xác, và một request gửi lại cùng `Idempotency-Key` vẫn trả 201 dù không tạo lịch mới.
+- `/metrics` của backend nằm ngoài tiền tố `/api/v1`, Nginx không chuyển tiếp nên không truy cập được từ bên ngoài.
+
+Kiểm chứng nhanh (Git Bash, sau khi `source .env` hoặc thay giá trị trực tiếp):
+
+```bash
+# Prometheus chặn khi không có mật khẩu
+curl -sk -o /dev/null -w "%{http_code}\n" https://localhost/prometheus/        # 401
+# Tất cả target đang up
+curl -sk -u "$PROMETHEUS_WEB_USER:$PROMETHEUS_WEB_PASSWORD" https://localhost/prometheus/api/v1/targets \
+  | grep -o '"health":"[a-z]*"' | sort | uniq -c                               # 5 "health":"up"
+```
+
 ## Hardening
 
 | Biện pháp | Cách làm | Lệnh kiểm chứng |
 | --- | --- | --- |
-| Container non-root | Backend/worker chạy `USER node`; Nginx dùng `nginxinc/nginx-unprivileged` (cổng 8080/8443 bên trong); pgAdmin chạy bằng uid 5050 | `docker compose exec backend id` → `uid=1000(node)` |
-| Tách mạng | `edge`: chỉ Nginx publish 80/443. `app` (internal): backend, worker, PostgreSQL, pgAdmin. `egress`: chỉ worker (gửi email). PostgreSQL không publish cổng | `docker network inspect booking_app`; `Test-NetConnection localhost -Port 5432` (Windows) hoặc `nc -zv localhost 5432` → thất bại |
-| Mật khẩu mạnh, bí mật | pgAdmin tắt Gravatar (không gửi mã băm email quản trị ra ngoài) và kiểm tra phiên bản qua Internet; `scripts/gen-env.sh` sinh mật khẩu ngẫu nhiên 24 ký tự (JWT 48 ký tự); `.env` và khóa riêng TLS nằm trong `.gitignore` | `git log --all -- .env` không có kết quả |
+| Container non-root | Backend/worker chạy `USER node`; Nginx dùng `nginxinc/nginx-unprivileged` (cổng 8080/8443 bên trong); pgAdmin chạy bằng uid 5050; Prometheus, postgres_exporter chạy bằng `nobody`, Grafana bằng uid 472, nginx-exporter bằng uid 1001. Ngoại lệ: cAdvisor cần root để đọc cgroup của máy chủ, bù lại bỏ mọi capability và gắn mọi thư mục ở chế độ read-only | `docker compose exec backend id` → `uid=1000(node)` |
+| Tách mạng | `edge`: chỉ Nginx publish 80/443. `app` (internal): backend, worker, PostgreSQL, pgAdmin. `monitor` (internal): Prometheus, Grafana, cAdvisor, exporter. `egress`: chỉ worker (gửi email). PostgreSQL, Prometheus, Grafana không publish cổng | `docker network inspect booking_app`; `Test-NetConnection localhost -Port 5432` (Windows) hoặc `nc -zv localhost 5432` → thất bại |
+| Mật khẩu mạnh, bí mật | pgAdmin tắt Gravatar (không gửi mã băm email quản trị ra ngoài) và kiểm tra phiên bản qua Internet; `scripts/gen-env.sh` sinh mật khẩu ngẫu nhiên 24 ký tự (JWT 48 ký tự); trang Prometheus có basic auth, mật khẩu băm SHA-512 crypt; `.env`, khóa riêng TLS và `nginx/auth/htpasswd` nằm trong `.gitignore` | `git log --all -- .env` không có kết quả |
 | Hạn chế quyền DB | `booking_app` không SUPERUSER, chỉ sở hữu schema `app`; `exporter` chỉ có `pg_monitor`; thu hồi quyền mặc định của PUBLIC | `docker compose exec postgres psql -U postgres -d booking -c '\du'` |
-| Giới hạn quyền container | `no-new-privileges` cho mọi dịch vụ; `cap_drop: [ALL]`, `read_only: true` + `tmpfs` cho Nginx/backend/worker; PostgreSQL chỉ giữ 5 capability cần cho entrypoint; pgAdmin chỉ giữ `NET_BIND_SERVICE` (tệp python của image có file capability này); giới hạn CPU/RAM từng dịch vụ | `docker inspect booking-backend-1 --format '{{.HostConfig.CapDrop}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.SecurityOpt}}'` |
+| Giới hạn quyền container | `no-new-privileges` cho mọi dịch vụ; `cap_drop: [ALL]`, `read_only: true` (+ `tmpfs` khi cần) cho Nginx, backend, worker và mọi dịch vụ giám sát; PostgreSQL chỉ giữ 5 capability cần cho entrypoint; pgAdmin chỉ giữ `NET_BIND_SERVICE` (tệp python của image có file capability này); giới hạn CPU/RAM từng dịch vụ | `docker inspect booking-backend-1 --format '{{.HostConfig.CapDrop}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.SecurityOpt}}'` |
 | Security headers, HTTPS | TLS 1.2/1.3, HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy; `server_tokens off`; HTTP 80 → 301 HTTPS | `curl -kI https://localhost`; `curl -I http://localhost` |
 | Giới hạn tốc độ | Nginx `limit_req` cho `/api/` (20 req/s) và đăng nhập (5 req/phút) trả 429; ứng dụng giới hạn thêm đăng nhập, tra cứu, đặt lịch; khóa tài khoản 15 phút sau 5 lần sai | Xem lệnh bên dưới |
 | Ứng dụng | Mật khẩu băm bcrypt; cookie phiên `HttpOnly`, `Secure`, `SameSite=Strict`; chống CSRF bằng header bắt buộc; kiểm tra quyền trên mọi API quản trị; mã tra cứu ngẫu nhiên và luôn cần kèm số điện thoại; log không ghi số điện thoại, email, query string | `curl -k https://localhost/api/v1/admin/appointments?from=2026-01-01&to=2026-01-01` → 401 |
-| Image cố định phiên bản | `node:22.22-alpine`, `nginxinc/nginx-unprivileged:1.28-alpine`, `postgres:17.6-alpine`, `dpage/pgadmin4:9.8` (không dùng `latest`) | `docker compose config --images` |
+| Image cố định phiên bản | `node:22.22-alpine`, `nginxinc/nginx-unprivileged:1.28-alpine`, `postgres:17.6-alpine`, `dpage/pgadmin4:9.8`, `prom/prometheus:v3.13.4`, `grafana/grafana:13.2.3`, `gcr.io/cadvisor/cadvisor:v0.55.1`, `nginx/nginx-prometheus-exporter:1.5.3`, `prometheuscommunity/postgres-exporter:v0.20.1` (không dùng `latest`) | `docker compose config --images` |
 
 Thử giới hạn tốc độ đăng nhập (Git Bash):
 
@@ -143,10 +203,17 @@ for i in $(seq 1 12); do curl -sk -o /dev/null -w "%{http_code} " -X POST https:
 
 ![HTTPS và security headers](docs/images/22-https-security-headers.png)
 
+### Giám sát Prometheus + Grafana
+
+| | |
+| --- | --- |
+| ![6 luật cảnh báo của Prometheus](docs/images/10-prometheus-alerts.png) 6 luật cảnh báo của Prometheus | ![Truy vấn PromQL: request backend theo mã trạng thái](docs/images/11-prometheus-promql.png) Truy vấn PromQL: request backend theo mã trạng thái |
+| ![Dashboard Web server & API](docs/images/13-grafana-web-api.png) Dashboard Web server & API | ![Dashboard PostgreSQL](docs/images/14-grafana-postgres.png) Dashboard PostgreSQL |
+
 ## Kiểm thử
 
 ```bash
-# Unit test (tính giờ trống, định dạng thời gian)
+# Unit test: tính giờ trống, metrics HTTP (backend, 10 test); định dạng thời gian (frontend, 3 test)
 cd backend && npm ci && npm test
 cd frontend && npm ci && npm test
 
@@ -176,12 +243,16 @@ cd frontend && npm ci && npm run dev   # http://localhost:5173, /api được pr
 ├── frontend/                # React + Vite; Dockerfile build tệp tĩnh vào image Nginx
 ├── nginx/
 │   ├── nginx.conf           # log JSON, limit_req, server_tokens off
-│   ├── conf.d/booking.conf  # 80→443, HTTPS, định tuyến /, /api/, /pgadmin/, stub_status
+│   ├── conf.d/booking.conf  # 80→443, HTTPS, định tuyến /, /api/, /pgadmin/, /grafana/, /prometheus/, stub_status
 │   ├── snippets/            # security headers, proxy tới backend
-│   └── certs/               # sinh bằng scripts/gen-cert.sh, không commit
+│   ├── certs/               # sinh bằng scripts/gen-cert.sh, không commit
+│   └── auth/                # htpasswd của Prometheus, sinh bằng scripts/gen-htpasswd.sh, không commit
+├── monitoring/
+│   ├── prometheus/          # prometheus.yml (nguồn thu thập), alerts.yml (luật cảnh báo)
+│   └── grafana/             # provisioning (nguồn dữ liệu, thư mục dashboard) và 3 dashboard JSON
 ├── postgres/init/           # tạo user ứng dụng và user exporter quyền hạn chế
 ├── pgadmin/servers.json     # khai báo sẵn kết nối PostgreSQL
-├── scripts/                 # gen-env.sh, gen-cert.sh, smoke-test.mjs
+├── scripts/                 # gen-env.sh, gen-cert.sh, gen-htpasswd.sh, smoke-test.mjs
 ├── docs/images/             # ảnh minh chứng (xem mục "Ảnh minh chứng")
 ├── docs/sql/                # câu SQL mẫu để thao tác và kiểm chứng trong pgAdmin
 ├── docker-compose.yml
@@ -192,3 +263,4 @@ cd frontend && npm ci && npm run dev   # http://localhost:5173, /api được pr
 
 - Chạy các script `.sh` trong **Git Bash**. Repository dùng `.gitattributes` để giữ xuống dòng LF cho tệp chạy trong container.
 - Nếu cổng 80/443 đã bị chiếm, đổi `HTTP_PORT`/`HTTPS_PORT` trong `.env`. Khi đổi cổng HTTPS, truy cập trực tiếp `https://localhost:<cổng>` (chuyển hướng từ HTTP luôn trỏ về cổng 443).
+- Dùng Docker Engine trong WSL không có systemd: dockerd tự chạy containerd riêng ở `/run/docker/containerd/`, nên cAdvisor không thấy container (dashboard Container trống). Tạo liên kết tới đường dẫn chuẩn rồi khởi động lại cAdvisor: `mkdir -p /run/containerd && ln -s /run/docker/containerd/containerd.sock /run/containerd/containerd.sock && docker compose restart cadvisor`. Docker Desktop và Linux có systemd không cần bước này.

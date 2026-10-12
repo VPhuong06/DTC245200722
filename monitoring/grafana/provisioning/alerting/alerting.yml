@@ -1,0 +1,2 @@
+# Cảnh báo được định nghĩa ở Prometheus (monitoring/prometheus/alerts.yml), không dùng Grafana Alerting.
+apiVersion: 1

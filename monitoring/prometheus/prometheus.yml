@@ -1,0 +1,41 @@
+# Prometheus thu thập metrics 15 giây/lần từ các nguồn trong mạng nội bộ Docker.
+#   cadvisor          – CPU, RAM, mạng của từng container
+#   nginx             – web server (nginx-prometheus-exporter đọc stub_status)
+#   backend           – API NestJS: số request theo route/mã trạng thái, độ trễ, lịch hẹn trong ngày
+#   postgres          – PostgreSQL (postgres_exporter, user "exporter" chỉ có quyền pg_monitor)
+#   prometheus        – chính Prometheus
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    project: booking
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: prometheus
+    metrics_path: /prometheus/metrics
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    metric_relabel_configs:
+      # Chỉ giữ container của dự án, bỏ cgroup hệ thống để giảm số chuỗi metrics.
+      - source_labels: [name]
+        regex: "booking-.+"
+        action: keep
+
+  - job_name: nginx
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+
+  - job_name: backend
+    static_configs:
+      - targets: ["backend:3000"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

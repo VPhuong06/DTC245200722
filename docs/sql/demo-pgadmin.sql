@@ -83,7 +83,9 @@ CREATE ROLE hacker WITH SUPERUSER LOGIN PASSWORD 'abc';
 -- 4. THEO DÕI HOẠT ĐỘNG
 -- ---------------------------------------------------------------------
 
--- 4.1 Các kết nối đang mở tới database booking (backend, worker, pgAdmin).
+-- 4.1 Các kết nối đang mở tới database booking (backend, worker, pgAdmin, exporter).
+--     Dòng của user khác (exporter) hiện <insufficient privilege>: booking_app không
+--     được xem câu lệnh của user khác, đó cũng là một biểu hiện của hạn chế quyền.
 SELECT application_name, usename, state, query_start,
        left(regexp_replace(query, '\s+', ' ', 'g'), 60) AS cau_lenh
 FROM pg_stat_activity

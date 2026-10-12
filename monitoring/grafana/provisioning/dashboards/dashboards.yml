@@ -1,0 +1,12 @@
+# Nạp các dashboard JSON trong /etc/grafana/dashboards vào thư mục "Đặt lịch hẹn".
+apiVersion: 1
+
+providers:
+  - name: booking
+    folder: Đặt lịch hẹn
+    folderUid: booking
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards

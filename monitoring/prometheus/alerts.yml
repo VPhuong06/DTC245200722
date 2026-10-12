@@ -1,0 +1,51 @@
+# Cảnh báo cơ bản: xem tại https://localhost/prometheus/alerts
+groups:
+  - name: booking
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Không thu thập được metrics từ {{ $labels.job }}"
+          description: "Target {{ $labels.instance }} ({{ $labels.job }}) không phản hồi quá 1 phút."
+
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "PostgreSQL không kết nối được"
+
+      - alert: NginxDown
+        expr: nginx_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Nginx không trả lời stub_status"
+
+      - alert: BackendHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{job="backend",status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total{job="backend"}[5m])), 1e-9) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Hơn 5% request backend trả lỗi 5xx"
+
+      - alert: BackendSlowResponses
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="backend"}[5m]))) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "95% request backend chậm hơn 1 giây"
+
+      - alert: ContainerMemoryNearLimit
+        expr: |
+          container_memory_working_set_bytes{name=~"booking-.+"}
+            / (container_spec_memory_limit_bytes{name=~"booking-.+"} > 0) > 0.9
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Container {{ $labels.name }} dùng trên 90% giới hạn RAM"

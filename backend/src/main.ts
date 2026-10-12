@@ -10,9 +10,10 @@ import { HttpExceptionFilter } from './common/http-exception.filter';
 import { logger } from './common/json-logger';
 import { requestLogging } from './common/request-logging.middleware';
 import { config } from './config';
-import { createPool } from './db/db.service';
+import { createPool, DbService } from './db/db.service';
 import { runMigrations } from './db/migrate';
 import { seedDemoData } from './db/seed';
+import { metricsHandler, registerBusinessMetrics } from './metrics/metrics';
 
 async function prepareDatabase(): Promise<void> {
   const pool = createPool();
@@ -33,6 +34,9 @@ async function bootstrap(): Promise<void> {
   app.set('trust proxy', 'loopback, linklocal, uniquelocal');
   app.disable('x-powered-by');
   app.use(requestLogging);
+  // /metrics nằm ngoài tiền tố /api/v1 nên Nginx không chuyển tiếp ra ngoài; chỉ Prometheus đọc.
+  registerBusinessMetrics(app.get(DbService));
+  app.getHttpAdapter().getInstance().get('/metrics', metricsHandler);
   app.use(cookieParser());
   app.useBodyParser('json', { limit: '100kb' });
   app.setGlobalPrefix('api/v1');
