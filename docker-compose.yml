@@ -4,13 +4,22 @@
 #   edge   – chỉ Nginx, publish cổng 80/443 ra máy chủ
 #   app    – nội bộ (internal): Nginx, backend, worker, PostgreSQL, pgAdmin
 #   egress – cho worker gửi email ra Internet
-#   monitor – nội bộ (internal): Prometheus, Grafana, cAdvisor, các exporter
+#   monitor – nội bộ (internal): Prometheus, Grafana, cAdvisor, các exporter, Loki, Promtail
 name: booking
 
 x-hardening: &hardening
   restart: unless-stopped
   security_opt:
     - no-new-privileges:true
+  # Log json-file có xoay vòng (tối đa 3 tệp x 10 MB mỗi container) để không đầy đĩa.
+  # "labels" ghi kèm tên dịch vụ compose vào từng dòng log để Promtail gắn nhãn service
+  # mà không cần truy cập docker.sock.
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+      labels: com.docker.compose.service
 
 x-backend-env: &backend-env
   NODE_ENV: production
@@ -308,6 +317,47 @@ services:
       resources:
         limits: { cpus: "0.25", memory: 64M }
 
+  # ================================================================ Log tập trung (commit 3)
+
+  # ---------------------------------------------------------------- Loki: lưu và truy vấn log (LogQL), giữ 7 ngày
+  # Không publish cổng, không đi qua Nginx; truy vấn qua Grafana (Explore hoặc dashboard).
+  loki:
+    <<: *hardening
+    image: grafana/loki:3.6.17
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    networks: [monitor]
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 512M }
+
+  # ---------------------------------------------------------------- Promtail: đọc log json-file của Docker, đẩy sang Loki
+  # Ngoại lệ hardening: tệp log của Docker chỉ root đọc được nên Promtail chạy bằng root;
+  # bù lại bỏ mọi capability, chỉ gắn read-only thư mục log (không gắn docker.sock).
+  promtail:
+    <<: *hardening
+    image: grafana/promtail:3.6.11
+    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    volumes:
+      - ./monitoring/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - promtail-data:/promtail
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    networks: [monitor]
+    depends_on: [loki]
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+
 networks:
   edge: {}
   app:
@@ -321,3 +371,5 @@ volumes:
   pgadmin-data:
   prometheus-data:
   grafana-data:
+  loki-data:
+  promtail-data:
