@@ -1,0 +1,187 @@
+# Hệ thống đặt lịch hẹn – toàn bộ dịch vụ chạy bằng một lệnh: docker compose up -d --build
+#
+# Mạng:
+#   edge   – chỉ Nginx, publish cổng 80/443 ra máy chủ
+#   app    – nội bộ (internal): Nginx, backend, worker, PostgreSQL, pgAdmin
+#   egress – cho worker gửi email ra Internet
+name: booking
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+
+x-backend-env: &backend-env
+  NODE_ENV: production
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: ${POSTGRES_DB:?Thiếu POSTGRES_DB}
+  DB_USER: ${APP_DB_USER:?Thiếu APP_DB_USER}
+  DB_PASSWORD: ${APP_DB_PASSWORD:?Thiếu APP_DB_PASSWORD}
+  JWT_SECRET: ${JWT_SECRET:?Thiếu JWT_SECRET}
+  PUBLIC_URL: ${PUBLIC_URL:-https://localhost}
+  RATE_LIMIT_MULTIPLIER: ${RATE_LIMIT_MULTIPLIER:-1}
+
+services:
+  # ---------------------------------------------------------------- Reverse proxy + frontend
+  nginx:
+    <<: *hardening
+    build: ./frontend
+    image: booking-nginx:1.0.0
+    ports:
+      - "${HTTP_PORT:-80}:8080"
+      - "${HTTPS_PORT:-443}:8443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    networks: [edge, app]
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 128M }
+
+  # ---------------------------------------------------------------- API NestJS
+  backend:
+    <<: *hardening
+    build: ./backend
+    image: booking-backend:1.0.0
+    init: true
+    environment:
+      <<: *backend-env
+      PORT: "3000"
+      SERVICE_NAME: backend
+      COOKIE_SECURE: "true"
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Thiếu ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Thiếu ADMIN_PASSWORD}
+      SEED_DEMO: ${SEED_DEMO:-true}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    networks: [app]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 384M }
+
+  # ---------------------------------------------------------------- Worker: hết hạn lịch chờ, gửi email, nhắc lịch
+  worker:
+    <<: *hardening
+    build: ./backend
+    image: booking-backend:1.0.0
+    init: true
+    command: ["node", "dist/worker.js"]
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: worker
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    networks: [app, egress]
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+
+  # ---------------------------------------------------------------- PostgreSQL (không publish cổng)
+  postgres:
+    <<: *hardening
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Thiếu POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --data-checksums"
+      # Dùng cho postgres/init/01-roles.sh khi khởi tạo lần đầu.
+      APP_DB_USER: ${APP_DB_USER}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      EXPORTER_DB_PASSWORD: ${EXPORTER_DB_PASSWORD:?Thiếu EXPORTER_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    # Entrypoint cần một số quyền để đổi chủ thư mục dữ liệu rồi hạ quyền xuống user postgres.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    shm_size: 128m
+    networks: [app]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  # ---------------------------------------------------------------- pgAdmin (truy cập qua https://localhost/pgadmin/)
+  pgadmin:
+    <<: *hardening
+    image: dpage/pgadmin4:9.8
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?Thiếu PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?Thiếu PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_LISTEN_PORT: "5050"
+      PGADMIN_DISABLE_POSTFIX: "true"
+      PGADMIN_CONFIG_SERVER_MODE: "True"
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "True"
+      PGADMIN_CONFIG_SESSION_COOKIE_SECURE: "True"
+      PGADMIN_CONFIG_CONSOLE_LOG_LEVEL: "30"
+      # Mạng app không ra Internet: tắt kiểm tra phiên bản mới và ảnh Gravatar
+      # (Gravatar còn làm lộ mã băm email quản trị ra dịch vụ bên ngoài).
+      PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED: "False"
+      PGADMIN_CONFIG_SHOW_GRAVATAR_IMAGE: "False"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+    # Chạy bằng uid 5050. Bỏ mọi capability mặc định, chỉ giữ NET_BIND_SERVICE vì tệp
+    # /venv/bin/python3 của image được gắn sẵn file capability này (thiếu thì không chạy được).
+    # Không bật read_only: entrypoint ghi tệp cấu hình vào /pgadmin4 khi khởi động.
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    networks: [app]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 512M }
+
+networks:
+  edge: {}
+  app:
+    internal: true
+  egress: {}
+
+volumes:
+  pgdata:
+  pgadmin-data:

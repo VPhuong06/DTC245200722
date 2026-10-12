@@ -1,0 +1,7 @@
+# Giữ xuống dòng LF cho tệp chạy trong container Linux (tránh lỗi "/bin/sh^M" khi clone trên Windows).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.webp binary
+*.woff binary
+*.woff2 binary

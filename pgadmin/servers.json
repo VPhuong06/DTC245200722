@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Booking PostgreSQL",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "booking",
+      "Username": "booking_app",
+      "SSLMode": "prefer",
+      "Comment": "Cơ sở dữ liệu hệ thống đặt lịch. Đăng nhập bằng APP_DB_PASSWORD trong tệp .env (user chỉ có quyền trên schema app)."
+    }
+  }
+}
