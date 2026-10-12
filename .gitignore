@@ -1,0 +1,22 @@
+# Bí mật: không bao giờ commit
+.env
+.env.*
+!.env.example
+nginx/certs/*
+!nginx/certs/.gitkeep
+
+# Node
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+
+# Công cụ cục bộ
+.pgtest/
+.claude/settings.local.json
+.DS_Store
+Thumbs.db
+
+# Cấu hình cục bộ của công cụ, không thuộc đồ án
+.claude/

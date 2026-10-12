@@ -1,0 +1,73 @@
+@import 'tailwindcss';
+@import '@fontsource/be-vietnam-pro/vietnamese-400.css';
+@import '@fontsource/be-vietnam-pro/vietnamese-500.css';
+@import '@fontsource/be-vietnam-pro/vietnamese-600.css';
+@import '@fontsource/be-vietnam-pro/vietnamese-700.css';
+@import '@fontsource/be-vietnam-pro/latin-400.css';
+@import '@fontsource/be-vietnam-pro/latin-500.css';
+@import '@fontsource/be-vietnam-pro/latin-600.css';
+@import '@fontsource/be-vietnam-pro/latin-700.css';
+
+@theme {
+  --font-sans: 'Be Vietnam Pro', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Màu thương hiệu (xanh mòng két) */
+  --color-brand-50: #ecf7f6;
+  --color-brand-100: #d5eeeb;
+  --color-brand-200: #a9ddd7;
+  --color-brand-500: #16918c;
+  --color-brand-600: #0f7b78;
+  --color-brand-700: #0b6461;
+  --color-brand-800: #094f4d;
+
+  /* Chữ và nền */
+  --color-ink: #142a33;
+  --color-muted: #5f6e76;
+  --color-faint: #8a979e;
+  --color-line: #e3e9ec;
+  --color-canvas: #f5f7f8;
+  --color-panel: #eef2f4;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+  }
+}
+
+@utility card {
+  @apply rounded-2xl border border-line bg-white;
+}
+@utility input {
+  @apply block w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-[15px] text-ink placeholder:text-faint
+    transition outline-none focus:border-brand-500 focus:ring-3 focus:ring-brand-100 disabled:bg-panel disabled:text-muted;
+}
+@utility label {
+  @apply mb-1.5 block text-sm font-medium text-ink/85;
+}
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[15px] font-semibold transition
+    disabled:cursor-not-allowed disabled:opacity-60;
+}
+@utility btn-primary {
+  @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
+}
+@utility btn-secondary {
+  @apply btn border border-line bg-white text-ink hover:bg-canvas;
+}
+@utility btn-danger {
+  @apply btn bg-rose-50 text-rose-700 hover:bg-rose-100;
+}
+@utility btn-muted {
+  @apply btn bg-panel text-ink/80 font-medium hover:bg-line;
+}
+@utility eyebrow {
+  @apply text-xs font-medium uppercase tracking-wide text-muted;
+}
