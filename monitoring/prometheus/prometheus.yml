@@ -3,6 +3,7 @@
 #   nginx             – web server (nginx-prometheus-exporter đọc stub_status)
 #   backend           – API NestJS: số request theo route/mã trạng thái, độ trễ, lịch hẹn trong ngày
 #   postgres          – PostgreSQL (postgres_exporter, user "exporter" chỉ có quyền pg_monitor)
+#   loki, promtail    – hệ thống log tập trung (commit 3)
 #   prometheus        – chính Prometheus
 global:
   scrape_interval: 15s
@@ -39,3 +40,11 @@ scrape_configs:
   - job_name: postgres
     static_configs:
       - targets: ["postgres-exporter:9187"]
+
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+
+  - job_name: promtail
+    static_configs:
+      - targets: ["promtail:9080"]

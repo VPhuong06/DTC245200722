@@ -1,0 +1,90 @@
+# Promtail đọc trực tiếp file log json-file của Docker (gắn read-only) và đẩy sang Loki.
+# Không gắn docker.sock: socket Docker dù read-only vẫn cho toàn quyền điều khiển Docker.
+# Tên dịch vụ lấy từ "attrs" mà log driver ghi kèm mỗi dòng
+# (logging.options.labels trong docker-compose.yml).
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+  log_format: json
+
+positions:
+  filename: /promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: docker
+          __path__: /var/lib/docker/containers/*/*-json.log
+    pipeline_stages:
+      # 1. Tách bản ghi json-file: nội dung log, stdout/stderr, thời gian, tên dịch vụ compose.
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            time: time
+            service: 'attrs."com.docker.compose.service"'
+      - labels:
+          service:
+          stream:
+      # Nhãn filename (đường dẫn tệp log, đổi mỗi lần tạo lại container) không cần cho truy vấn.
+      - labeldrop:
+          - filename
+      # Bỏ log của container không thuộc dự án (không có nhãn dịch vụ).
+      - match:
+          selector: '{job="docker", service=""}'
+          action: drop
+          drop_counter_reason: not_booking
+      - timestamp:
+          source: time
+          format: RFC3339Nano
+      - output:
+          source: output
+
+      # 2. Lấy mức log (level) theo định dạng của từng dịch vụ.
+      # Backend, worker, Nginx (access log), Grafana: JSON có trường "level".
+      - match:
+          selector: '{service=~"backend|worker|nginx|grafana|loki|promtail"}'
+          stages:
+            - json:
+                expressions:
+                  level: level
+      # Nginx error log dạng chữ: "2026/10/12 07:37:19 [warn] ..."
+      - match:
+          selector: '{service="nginx"}'
+          stages:
+            - regex:
+                expression: '^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \[(?P<level>\w+)\]'
+      # Prometheus, exporter: logfmt "level=INFO ..."
+      - match:
+          selector: '{service=~"prometheus|nginx-exporter|postgres-exporter"}'
+          stages:
+            - logfmt:
+                mapping:
+                  level:
+      # PostgreSQL: "2026-10-12 07:25:19.916 UTC [1] LOG:  ..."
+      - match:
+          selector: '{service="postgres"}'
+          stages:
+            - regex:
+                expression: '^\S+ \S+ \S+ \[\d+\] (?P<level>[A-Z]+):'
+      # cAdvisor (glog): "I1012 07:25:19.916 ..." – I/W/E/F
+      - match:
+          selector: '{service="cadvisor"}'
+          stages:
+            - regex:
+                expression: '^(?P<level>[IWEF])\d{4} '
+
+      # 3. Chuẩn hóa về một bộ giá trị: debug, info, warn, error, fatal.
+      #    Dòng DETAIL/STATEMENT/HINT/CONTEXT của PostgreSQL (giải thích cho dòng ERROR ngay trên) tính là info.
+      - template:
+          source: level
+          template: >-
+            {{ $l := ToLower .Value }}{{ if or (eq $l "log") (eq $l "i") (eq $l "notice") (eq $l "information") (eq $l "detail") (eq $l "statement") (eq $l "hint") (eq $l "context") }}info{{ else if or (eq $l "warning") (eq $l "w") }}warn{{ else if or (eq $l "eror") (eq $l "e") (eq $l "err") (eq $l "crit") }}error{{ else if or (eq $l "f") (eq $l "panic") }}fatal{{ else }}{{ $l }}{{ end }}
+      - labels:
+          level:
