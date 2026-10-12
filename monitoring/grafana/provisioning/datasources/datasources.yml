@@ -1,0 +1,13 @@
+# Nguồn dữ liệu khai báo sẵn khi Grafana khởi động (không cần cấu hình tay).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090/prometheus
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s

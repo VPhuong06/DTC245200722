@@ -4,6 +4,8 @@
 !.env.example
 nginx/certs/*
 !nginx/certs/.gitkeep
+nginx/auth/*
+!nginx/auth/.gitkeep
 
 # Node
 node_modules/
